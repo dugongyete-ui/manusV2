@@ -75,11 +75,20 @@ class ExecutionAgent(BaseAgent):
                 yield StepEvent(status=StepStatus.FAILED, step=step)
             elif isinstance(event, MessageEvent):
                 step.status = ExecutionStatus.COMPLETED
-                parsed_response = await self.json_parser.parse(event.message)
-                new_step = Step.model_validate(parsed_response)
-                step.success = new_step.success
-                step.result = new_step.result
-                step.attachments = new_step.attachments
+                try:
+                    parsed_response = await self.json_parser.parse(event.message)
+                    if isinstance(parsed_response, dict):
+                        new_step = Step.model_validate(parsed_response)
+                        step.success = new_step.success
+                        step.result = new_step.result
+                        step.attachments = new_step.attachments
+                    else:
+                        step.success = True
+                        step.result = str(parsed_response) if parsed_response else event.message
+                except Exception as e:
+                    logger.warning(f"Failed to parse step result, using raw message: {e}")
+                    step.success = True
+                    step.result = event.message
                 yield StepEvent(status=StepStatus.COMPLETED, step=step)
                 if step.result:
                     yield MessageEvent(message=step.result)

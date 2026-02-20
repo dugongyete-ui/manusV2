@@ -64,8 +64,19 @@ class PlannerAgent(BaseAgent):
         async for event in self.execute(message):
             if isinstance(event, MessageEvent):
                 logger.info(event.message)
-                parsed_response = await self.json_parser.parse(event.message)
-                plan = Plan.model_validate(parsed_response)
+                try:
+                    parsed_response = await self.json_parser.parse(event.message)
+                    if isinstance(parsed_response, str):
+                        parsed_response = {"message": parsed_response, "goal": "", "title": "", "steps": []}
+                    plan = Plan.model_validate(parsed_response)
+                except Exception as e:
+                    logger.error(f"Failed to parse plan response: {e}")
+                    plan = Plan(
+                        title="Task Plan",
+                        goal=event.message[:200] if event.message else "Process user request",
+                        message=event.message[:500] if event.message else "I'll work on your request.",
+                        steps=[Step(id="1", description="Process the user's request")]
+                    )
                 yield PlanEvent(status=PlanStatus.CREATED, plan=plan)
             else:
                 yield event
@@ -75,24 +86,23 @@ class PlannerAgent(BaseAgent):
         async for event in self.execute(message):
             if isinstance(event, MessageEvent):
                 logger.debug(f"Planner agent update plan: {event.message}")
-                parsed_response = await self.json_parser.parse(event.message)
-                updated_plan = Plan.model_validate(parsed_response)
-                new_steps = [Step.model_validate(step) for step in updated_plan.steps]
+                try:
+                    parsed_response = await self.json_parser.parse(event.message)
+                    updated_plan = Plan.model_validate(parsed_response)
+                    new_steps = [Step.model_validate(s) for s in updated_plan.steps]
+                except Exception as e:
+                    logger.error(f"Failed to parse plan update: {e}")
+                    new_steps = []
                 
-                # Find the index of the first pending step
                 first_pending_index = None
-                for i, step in enumerate(plan.steps):
-                    if not step.is_done():
+                for i, s in enumerate(plan.steps):
+                    if not s.is_done():
                         first_pending_index = i
                         break
                 
-                # If there are pending steps, replace all pending steps
                 if first_pending_index is not None:
-                    # Keep completed steps
                     updated_steps = plan.steps[:first_pending_index]
-                    # Add new steps
                     updated_steps.extend(new_steps)
-                    # Update steps in plan
                     plan.steps = updated_steps
                 
                 yield PlanEvent(status=PlanStatus.UPDATED, plan=plan)

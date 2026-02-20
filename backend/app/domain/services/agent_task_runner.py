@@ -245,7 +245,17 @@ class AgentTaskRunner(TaskRunner):
             await self._session_repository.update_status(self._session_id, SessionStatus.COMPLETED)
         except Exception as e:
             logger.exception(f"Agent {self._agent_id} task encountered exception: {str(e)}")
-            await self._put_and_add_event(task, ErrorEvent(error=f"Task error: {str(e)}"))
+            error_msg = str(e)
+            if len(error_msg) > 200:
+                error_msg = error_msg[:200] + "..."
+            user_friendly_msg = "An error occurred while processing your request. Please try again."
+            if "validation error" in error_msg.lower():
+                user_friendly_msg = "There was a data processing issue. Please try rephrasing your request."
+            elif "timeout" in error_msg.lower():
+                user_friendly_msg = "The request timed out. Please try again."
+            elif "api" in error_msg.lower() or "llm" in error_msg.lower():
+                user_friendly_msg = "There was an issue connecting to the AI service. Please try again."
+            await self._put_and_add_event(task, ErrorEvent(error=user_friendly_msg))
             await self._session_repository.update_status(self._session_id, SessionStatus.COMPLETED)
     
     async def _run_flow(self, message: Message) -> AsyncGenerator[BaseEvent, None]:
