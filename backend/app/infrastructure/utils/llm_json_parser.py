@@ -5,7 +5,7 @@ from enum import Enum
 import logging
 
 from app.domain.utils.json_parser import JsonParser
-from app.infrastructure.external.llm.openai_llm import OpenAILLM
+from app.core.config import get_settings
 
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,13 @@ class LLMJsonParser(JsonParser):
     """
     
     def __init__(self):
-        self.llm = OpenAILLM()
+        settings = get_settings()
+        if settings.llm_type == "custom":
+            from app.infrastructure.external.llm.custom_llm import CustomLLM
+            self.llm = CustomLLM()
+        else:
+            from app.infrastructure.external.llm.openai_llm import OpenAILLM
+            self.llm = OpenAILLM()
         self.strategies = [
             self._try_direct_parse,
             self._try_markdown_block_parse,

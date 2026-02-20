@@ -105,13 +105,20 @@ class ExecutionAgent(BaseAgent):
         step.status = ExecutionStatus.COMPLETED
 
     async def summarize(self) -> AsyncGenerator[BaseEvent, None]:
-        message = SUMMARIZE_PROMPT
-        async for event in self.execute(message):
+        prompt = SUMMARIZE_PROMPT
+        async for event in self.execute(prompt):
             if isinstance(event, MessageEvent):
                 logger.debug(f"Execution agent summary: {event.message}")
-                parsed_response = await self.json_parser.parse(event.message)
-                message = Message.model_validate(parsed_response)
-                attachments = [FileInfo(file_path=file_path) for file_path in message.attachments]
-                yield MessageEvent(message=message.message, attachments=attachments)
+                try:
+                    parsed_response = await self.json_parser.parse(event.message)
+                    if isinstance(parsed_response, dict):
+                        msg_obj = Message.model_validate(parsed_response)
+                        attachments = [FileInfo(file_path=file_path) for file_path in msg_obj.attachments]
+                        yield MessageEvent(message=msg_obj.message, attachments=attachments)
+                    else:
+                        yield MessageEvent(message=str(parsed_response))
+                except Exception as e:
+                    logger.warning(f"Failed to parse summary, using raw message: {e}")
+                    yield MessageEvent(message=event.message)
                 continue
             yield event

@@ -97,9 +97,15 @@ class AgentTaskRunner(TaskRunner):
         return event
     
     async def _get_browser_screenshot(self) -> str:
-        screenshot = await self._browser.screenshot()
-        result = await self._file_storage.upload_file(screenshot, "screenshot.png", self._user_id)
-        return result.file_id
+        if not self._browser:
+            return ""
+        try:
+            screenshot = await self._browser.screenshot()
+            result = await self._file_storage.upload_file(screenshot, "screenshot.png", self._user_id)
+            return result.file_id
+        except Exception as e:
+            logger.warning(f"Failed to get browser screenshot: {e}")
+            return ""
 
     async def _sync_file_to_storage(self, file_path: str) -> Optional[FileInfo]:
         """Upload or update file and return FileInfo"""

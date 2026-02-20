@@ -64,11 +64,13 @@ class PlanActFlow(BaseFlow):
 
         tools = [
             ShellTool(sandbox),
-            BrowserTool(browser),
             FileTool(sandbox),
             MessageTool(),
             mcp_tool
         ]
+        
+        if browser:
+            tools.insert(1, BrowserTool(browser))
         
         # Only add search tool when search_engine is not None
         if search_engine:

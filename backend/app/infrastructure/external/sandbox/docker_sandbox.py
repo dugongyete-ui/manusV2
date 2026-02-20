@@ -17,14 +17,20 @@ from app.domain.external.llm import LLM
 logger = logging.getLogger(__name__)
 
 class DockerSandbox(Sandbox):
-    def __init__(self, ip: str = None, container_name: str = None):
+    def __init__(self, ip: str = None, container_name: str = None, base_url: str = None):
         """Initialize Docker sandbox and API interaction client"""
         self.client = httpx.AsyncClient(timeout=600)
         self.ip = ip
-        self.base_url = f"http://{self.ip}:8080"
-        self._vnc_url = f"ws://{self.ip}:5901"
-        self._cdp_url = f"http://{self.ip}:9222"
+        if base_url:
+            self.base_url = base_url.rstrip("/")
+        elif ip:
+            self.base_url = f"http://{self.ip}:8080"
+        else:
+            self.base_url = "http://127.0.0.1:8080"
+        self._vnc_url = f"ws://{self.ip or '127.0.0.1'}:5901"
+        self._cdp_url = f"http://{self.ip or '127.0.0.1'}:9222"
         self._container_name = container_name
+        logger.info(f"DockerSandbox initialized with base_url={self.base_url}")
     
     @property
     def id(self) -> str:
@@ -125,57 +131,49 @@ class DockerSandbox(Sandbox):
             raise Exception(f"Failed to create Docker sandbox: {str(e)}")
 
     async def ensure_sandbox(self) -> None:
-        """Ensure sandbox is ready by checking that all services are RUNNING"""
-        max_retries = 30  # Maximum number of retries
-        retry_interval = 2  # Seconds between retries
+        """Ensure sandbox is ready by checking connectivity"""
+        max_retries = 10
+        retry_interval = 1
         
         for attempt in range(max_retries):
             try:
                 response = await self.client.get(f"{self.base_url}/api/v1/supervisor/status")
                 response.raise_for_status()
                 
-                # Parse response as ToolResult
                 tool_result = ToolResult(**response.json())
                 
-                if not tool_result.success:
-                    logger.warning(f"Supervisor status check failed: {tool_result.message}")
-                    await asyncio.sleep(retry_interval)
-                    continue
-                
-                services = tool_result.data or []
-                if not services:
-                    logger.warning("No services found in supervisor status")
-                    await asyncio.sleep(retry_interval)
-                    continue
-                
-                # Check if all services are RUNNING
-                all_running = True
-                non_running_services = []
-                
-                for service in services:
-                    service_name = service.get("name", "unknown")
-                    state_name = service.get("statename", "")
+                if tool_result.success:
+                    services = tool_result.data or []
+                    if not services:
+                        logger.info("Sandbox is ready (local mode, no supervisor services)")
+                        return
                     
-                    if state_name != "RUNNING":
-                        all_running = False
-                        non_running_services.append(f"{service_name}({state_name})")
-                
-                if all_running:
-                    logger.info(f"All {len(services)} services are RUNNING - sandbox is ready")
-                    return  # Success - all services are running
+                    all_running = True
+                    non_running_services = []
+                    
+                    for service in services:
+                        service_name = service.get("name", "unknown")
+                        state_name = service.get("statename", "")
+                        
+                        if state_name != "RUNNING":
+                            all_running = False
+                            non_running_services.append(f"{service_name}({state_name})")
+                    
+                    if all_running:
+                        logger.info(f"All {len(services)} services are RUNNING - sandbox is ready")
+                        return
+                    else:
+                        logger.info(f"Waiting for services... Non-running: {', '.join(non_running_services)} (attempt {attempt + 1}/{max_retries})")
                 else:
-                    logger.info(f"Waiting for services to start... Non-running: {', '.join(non_running_services)} (attempt {attempt + 1}/{max_retries})")
-                    await asyncio.sleep(retry_interval)
+                    logger.warning(f"Supervisor status check failed: {tool_result.message}")
+                    
+                await asyncio.sleep(retry_interval)
                     
             except Exception as e:
                 logger.warning(f"Failed to check supervisor status (attempt {attempt + 1}/{max_retries}): {str(e)}")
                 await asyncio.sleep(retry_interval)
         
-        # If we reach here, we've exhausted all retries
-        error_message = f"Sandbox services failed to start after {max_retries} attempts ({max_retries * retry_interval} seconds)"
-        logger.error(error_message)
-        # TODO: find a way to handle this
-        #raise Exception(error_message)
+        logger.warning(f"Sandbox readiness check timed out after {max_retries} attempts, proceeding anyway")
 
     async def exec_command(self, session_id: str, exec_dir: str, command: str) -> ToolResult:
         response = await self.client.post(
@@ -469,9 +467,12 @@ class DockerSandbox(Sandbox):
         try:
             if self.client:
                 await self.client.aclose()
-            if self.container_name:
-                docker_client = docker.from_env()
-                docker_client.containers.get(self.container_name).remove(force=True)
+            if self._container_name:
+                try:
+                    docker_client = docker.from_env()
+                    docker_client.containers.get(self._container_name).remove(force=True)
+                except Exception:
+                    pass
             return True
         except Exception as e:
             logger.error(f"Failed to destroy Docker sandbox: {str(e)}")
@@ -525,37 +526,38 @@ class DockerSandbox(Sandbox):
             logger.error(f"Failed to resolve hostname {hostname}: {str(e)}")
             return None
 
+    @staticmethod
+    def _parse_sandbox_address(address: str) -> tuple:
+        """Parse sandbox address into (ip, port, base_url)"""
+        from urllib.parse import urlparse
+        if "://" not in address:
+            address = f"http://{address}"
+        parsed = urlparse(address)
+        host = parsed.hostname or "127.0.0.1"
+        port = parsed.port or 8080
+        base_url = f"http://{host}:{port}"
+        return host, port, base_url
+
     @classmethod
     async def create(cls) -> Sandbox:
-        """Create a new sandbox instance
-        
-        Returns:
-            New sandbox instance
-        """
+        """Create a new sandbox instance"""
         settings = get_settings()
 
         if settings.sandbox_address:
-            # Chrome CDP needs IP address
-            ip = await cls._resolve_hostname_to_ip(settings.sandbox_address)
-            return DockerSandbox(ip=ip)
+            host, port, base_url = cls._parse_sandbox_address(settings.sandbox_address)
+            logger.info(f"Creating sandbox with address: {base_url}")
+            return DockerSandbox(ip=host, base_url=base_url)
     
         return await asyncio.to_thread(DockerSandbox._create_task)
     
     @classmethod
     @alru_cache(maxsize=128, typed=True)
     async def get(cls, id: str) -> Sandbox:
-        """Get sandbox by ID
-        
-        Args:
-            id: Sandbox ID
-            
-        Returns:
-            Sandbox instance
-        """
+        """Get sandbox by ID"""
         settings = get_settings()
         if settings.sandbox_address:
-            ip = await cls._resolve_hostname_to_ip(settings.sandbox_address)
-            return DockerSandbox(ip=ip, container_name=id)
+            host, port, base_url = cls._parse_sandbox_address(settings.sandbox_address)
+            return DockerSandbox(ip=host, base_url=base_url, container_name=id)
 
         docker_client = docker.from_env()
         container = docker_client.containers.get(id)
