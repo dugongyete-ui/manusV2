@@ -46,26 +46,39 @@ class CustomLLM(LLM):
 
     def _build_tools_system_message(self, tools: List[Dict[str, Any]]) -> Dict[str, str]:
         lines = [
-            "You have access to the following tools:\n"
+            "## CRITICAL: TOOL CALLING INSTRUCTIONS",
+            "",
+            "You MUST use tools to perform actions. You CANNOT perform actions by describing them - you must call the appropriate tool.",
+            "For example, to create a file, you MUST call file_write. To run a command, you MUST call shell_exec.",
+            "NEVER say 'I created the file' or 'I ran the command' without actually calling the tool first.",
+            "",
+            "Available tools:\n"
         ]
         for tool in tools:
             func = tool.get("function", {})
             name = func.get("name", "")
             desc = func.get("description", "")
             params = func.get("parameters", {})
-            lines.append(f"- {name}: {desc}")
+            lines.append(f"### {name}")
+            lines.append(f"Description: {desc}")
             if params.get("properties"):
-                lines.append(f"  Parameters: {json.dumps(params['properties'], indent=2)}")
-            required = params.get("required", [])
-            if required:
-                lines.append(f"  Required: {', '.join(required)}")
+                props = params['properties']
+                required = params.get("required", [])
+                lines.append("Parameters:")
+                for pname, pinfo in props.items():
+                    req_marker = " (REQUIRED)" if pname in required else " (optional)"
+                    lines.append(f"  - {pname}: {pinfo.get('type', 'string')} - {pinfo.get('description', '')}{req_marker}")
+            lines.append("")
 
+        lines.append("## HOW TO CALL A TOOL")
+        lines.append("When you need to use a tool, your ENTIRE response must be ONLY this JSON (no other text):")
+        lines.append('{"tool_calls": [{"function": {"name": "TOOL_NAME", "arguments": {"param1": "value1"}}}]}')
         lines.append("")
-        lines.append(
-            'To use a tool, respond ONLY with a JSON object in this format: '
-            '{"tool_calls": [{"function": {"name": "tool_name", "arguments": {"param": "value"}}}]}'
-        )
-        lines.append("If you don't need to use a tool, respond normally with text.")
+        lines.append("## WHEN YOU ARE DONE (all actions completed)")
+        lines.append("Only after you have used all necessary tools and received their results, respond with your final result as JSON:")
+        lines.append('{"success": true, "result": "description of what was accomplished", "attachments": []}')
+        lines.append("")
+        lines.append("IMPORTANT: You must call at least one tool per step. Do NOT skip tool calls.")
 
         return {"role": "system", "content": "\n".join(lines)}
 
@@ -77,7 +90,7 @@ class CustomLLM(LLM):
 
             if role == "tool":
                 tool_call_id = msg.get("tool_call_id", "unknown")
-                tool_name = msg.get("name", "tool")
+                tool_name = msg.get("function_name") or msg.get("name") or "tool"
                 converted.append({
                     "role": "user",
                     "content": f"[Tool Result for {tool_name} (call_id: {tool_call_id})]: {content}"
@@ -107,6 +120,22 @@ class CustomLLM(LLM):
                     "content": content or ""
                 })
         return converted
+
+    def _should_force_tool_use(self, messages: List[Dict[str, Any]], response_content: str) -> bool:
+        has_tool_results = any(
+            msg.get("role") == "tool" or 
+            (msg.get("role") == "user" and msg.get("content", "").startswith("[Tool Result"))
+            for msg in messages
+        )
+        if has_tool_results:
+            return False
+        try:
+            data = json.loads(response_content.strip())
+            if isinstance(data, dict) and ("success" in data or "result" in data):
+                return True
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return False
 
     def _parse_tool_calls(self, text: str) -> Optional[List[Dict[str, Any]]]:
         if not text:
@@ -167,7 +196,7 @@ class CustomLLM(LLM):
                     break
             api_messages.insert(insert_idx, tools_msg)
 
-        if response_format and response_format.get("type") == "json_object":
+        if response_format and response_format.get("type") == "json_object" and not tools:
             json_instruction = {
                 "role": "system",
                 "content": (
@@ -273,6 +302,41 @@ class CustomLLM(LLM):
                     if tool_calls:
                         result["tool_calls"] = tool_calls
                         result["content"] = None
+                    elif self._should_force_tool_use(messages, content):
+                        logger.info("LLM skipped tool use, forcing retry with tool instruction")
+                        force_msg = {
+                            "role": "user",
+                            "content": (
+                                "ERROR: You responded without calling any tool. "
+                                "You MUST call a tool to perform the action. "
+                                "Respond ONLY with: "
+                                '{"tool_calls": [{"function": {"name": "TOOL_NAME", "arguments": {...}}}]}'
+                            )
+                        }
+                        api_messages.append({"role": "assistant", "content": content})
+                        api_messages.append(force_msg)
+                        payload["messages"] = api_messages
+                        
+                        async with httpx.AsyncClient(timeout=timeout_config) as client2:
+                            response2 = await client2.post(
+                                f"{self.api_base}/v1/chat/completions",
+                                json=payload,
+                                headers=headers,
+                            )
+                        if response2.status_code == 200:
+                            resp2_data = response2.json()
+                            choices2 = resp2_data.get("choices", [])
+                            if choices2:
+                                content2 = choices2[0].get("message", {}).get("content", "")
+                                content2 = self._strip_citations(content2)
+                                tool_calls2 = self._parse_tool_calls(content2)
+                                if tool_calls2:
+                                    result["tool_calls"] = tool_calls2
+                                    result["content"] = None
+                                    logger.info("Successfully forced tool call on retry")
+                                else:
+                                    logger.warning("LLM still didn't use tools after retry")
+                                    result["content"] = content2 or content
 
                 return result
 

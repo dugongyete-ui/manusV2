@@ -35,6 +35,15 @@ pip show email-validator > /dev/null 2>&1 || {
   cd /home/runner/workspace/sandbox && pip install -q -r requirements.txt
 }
 
+echo "=== Starting Chromium (CDP port 9222) ==="
+pkill -f chromium 2>/dev/null || true
+chromium --headless --no-sandbox --disable-gpu --disable-dev-shm-usage \
+  --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222 \
+  --disable-extensions --disable-background-networking \
+  --disable-default-apps --no-first-run \
+  > /tmp/logs/chromium.log 2>&1 &
+sleep 1
+
 echo "=== Starting Sandbox (port 8080) ==="
 cd /home/runner/workspace/sandbox
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8080 --log-level info > /tmp/logs/sandbox.log 2>&1 &
