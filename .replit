@@ -1,0 +1,71 @@
+modules = ["python-3.11", "nodejs-20"]
+
+[agent]
+expertMode = true
+
+[nix]
+channel = "stable-25_05"
+packages = ["mongosh", "mongodb", "redis"]
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "AI Manus"
+
+[[workflows.workflow]]
+name = "AI Manus"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "bash /home/runner/workspace/start.sh"
+waitForPort = 5000
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[ports]]
+localPort = 5000
+externalPort = 80
+
+[[ports]]
+localPort = 5001
+externalPort = 3001
+
+[[ports]]
+localPort = 8000
+externalPort = 8000
+exposeLocalhost = true
+
+[userenv]
+
+[userenv.shared]
+API_BASE = "https://api-dzeck--lizqz5hk.replit.app"
+MODEL_NAME = "claude37sonnetthinking"
+TEMPERATURE = "0.7"
+MAX_TOKENS = "2000"
+MONGODB_URI = "mongodb://127.0.0.1:27017"
+MONGODB_DATABASE = "manus"
+REDIS_HOST = "127.0.0.1"
+REDIS_PORT = "6379"
+REDIS_DB = "0"
+SANDBOX_ADDRESS = "http://127.0.0.1:8080"
+SEARCH_PROVIDER = "google"
+AUTH_PROVIDER = "local"
+LOCAL_AUTH_EMAIL = "admin@manus.ai"
+LOCAL_AUTH_PASSWORD = "admin123"
+JWT_SECRET_KEY = "manus-replit-secret-key-2026"
+JWT_ALGORITHM = "HS256"
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES = "1440"
+JWT_REFRESH_TOKEN_EXPIRE_DAYS = "30"
+LOG_LEVEL = "INFO"
+BACKEND_URL = "http://127.0.0.1:8000"
+LLM_PROVIDER = "Perplexity"
+LLM_TYPE = "custom"
