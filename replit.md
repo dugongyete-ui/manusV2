@@ -27,6 +27,7 @@ AI Manus is an AI agent platform cloned from GitHub. It provides an AI assistant
 - API Base: `https://api-dzeck--lizqz5hk.replit.app` (env: API_BASE)
 - Supports both OpenAI-compatible (`openai` type) and custom API format (`custom` type)
 - Custom adapter: `/backend/app/infrastructure/external/llm/custom_llm.py`
+- API response format: `{"data": "...", "status": "success"}` - content extracted from `data` field
 
 ## Auth Configuration
 - Auth mode: `local` (configured via AUTH_PROVIDER env var)
@@ -55,21 +56,34 @@ AI Manus is an AI agent platform cloned from GitHub. It provides an AI assistant
 - `JWT_SECRET_KEY` - JWT signing key
 
 ## Recent Changes
+- 2026-02-20: Chat flow fully working end-to-end
+  - Fixed critical bug: Custom LLM API returns `{"data": "...", "status": "success"}` wrapper - now correctly extracts `data` field
+  - Fixed Plan validation: `message` field can be None, handle gracefully
+  - Fixed MessageEvent: handle None content without crashing
+  - Made browser optional: system works without Chrome/Playwright CDP
+  - Planner no longer sends tools when tool_choice is "none"
+  - Added summarizer fallback: when plan has 0 steps and no message, triggers summarization
+  - Fixed status enum mapping: LLM returns "success" mapped to "completed"
+  - LLMJsonParser now uses correct LLM type (custom vs openai) based on config
+  - Sandbox ensure_sandbox handles local mode (no supervisor services)
+  - Improved error handling throughout agent stack
 - 2026-02-20: API improvements and health monitoring
   - Updated API_BASE to https://api-dzeck--lizqz5hk.replit.app
   - Added health check endpoints (/api/v1/health, /api/v1/health/llm)
-  - Fixed all LSP errors in config.py, custom_llm.py, openai_llm.py
   - Improved Custom LLM adapter: retry with jitter, better timeouts, error handling
-  - Verified API connection: responds in ~6s with HTTP 200
 - 2026-02-20: Switched from DeepSeek to Custom API
   - Created custom LLM adapter for non-OpenAI API format
   - Configured Perplexity provider with claude37sonnetthinking model
-  - Added LLM_TYPE, LLM_PROVIDER, API_BASE env vars
 - 2026-02-20: Initial setup on Replit
   - Created install.sh for auto dependency installation
   - Configured local auth (admin@manus.ai / admin123)
-  - Fixed start.sh for Replit environment
   - All services running: MongoDB, Redis, Sandbox, Backend, Frontend
+
+## Key Design Decisions
+- Browser tools are optional (no Chrome/CDP on Replit)
+- Sandbox runs locally on port 8080 (not Docker containers)
+- Status normalization: maps various LLM status strings (success, done, error) to enum values
+- Custom LLM adapter handles non-OpenAI API response formats
 
 ## User Preferences
 - Language: Indonesian (Bahasa Indonesia)

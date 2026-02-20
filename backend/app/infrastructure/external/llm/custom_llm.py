@@ -152,6 +152,7 @@ class CustomLLM(LLM):
                     content = response_data
                 elif isinstance(response_data, dict):
                     content = (
+                        response_data.get("data") or
                         response_data.get("response") or
                         response_data.get("text") or
                         response_data.get("content") or

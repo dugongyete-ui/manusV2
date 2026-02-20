@@ -132,7 +132,9 @@ class BaseAgent(ABC):
         else:
             yield ErrorEvent(error="Maximum iteration count reached, failed to complete the task")
         
-        yield MessageEvent(message=message["content"])
+        content = message.get("content") or ""
+        if content:
+            yield MessageEvent(message=content)
     
     async def _ensure_memory(self):
         if not self.memory:
@@ -161,8 +163,9 @@ class BaseAgent(ABC):
             response_format = {"type": format}
         
         for _ in range(self.max_retries):
+            tools = self.get_available_tools() if self.tool_choice != "none" else None
             message = await self.llm.ask(self.memory.get_messages(), 
-                                            tools=self.get_available_tools(), 
+                                            tools=tools, 
                                             response_format=response_format,
                                             tool_choice=self.tool_choice)
 

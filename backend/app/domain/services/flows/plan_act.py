@@ -131,14 +131,18 @@ class PlanActFlow(BaseFlow):
                     if isinstance(event, PlanEvent) and event.status == PlanStatus.CREATED:
                         self.plan = event.plan
                         logger.info(f"Agent {self._agent_id} created plan successfully with {len(event.plan.steps)} steps")
-                        yield TitleEvent(title=event.plan.title)
-                        yield MessageEvent(role="assistant", message=event.plan.message)
+                        yield TitleEvent(title=event.plan.title or "")
+                        if event.plan.message:
+                            yield MessageEvent(role="assistant", message=event.plan.message)
                     yield event
                 logger.info(f"Agent {self._agent_id} state changed from {AgentStatus.PLANNING} to {AgentStatus.EXECUTING}")
                 self.status = AgentStatus.EXECUTING
                 if not self.plan or len(self.plan.steps) == 0:
                     logger.info(f"Agent {self._agent_id} created plan successfully with no steps")
-                    self.status = AgentStatus.COMPLETED
+                    if not self.plan or not self.plan.message:
+                        self.status = AgentStatus.SUMMARIZING
+                    else:
+                        self.status = AgentStatus.COMPLETED
                     
             elif self.status == AgentStatus.EXECUTING:
                 # Execute plan
